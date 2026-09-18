@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # GitHub Actions tag filters use glob syntax, not regular expressions.
+      # The publish job validates the exact semantic-version shape below.
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go mod download
+      - run: go test ./...
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            extension: so
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            extension: so
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            extension: dylib
+          - runner: macos-15
+            goos: darwin
+            goarch: arm64
+            extension: dylib
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            extension: dll
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build and package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          EXPECTED_GOOS: ${{ matrix.goos }}
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
+          EXTENSION: ${{ matrix.extension }}
+        run: |
+          set -euo pipefail
+          test "$(go env GOOS)" = "$EXPECTED_GOOS"
+          test "$(go env GOARCH)" = "$EXPECTED_GOARCH"
+          version="${GITHUB_REF_NAME#v}"
+          plugin="codex-upstream-switcher"
+          archive="${plugin}_${version}_${EXPECTED_GOOS}_${EXPECTED_GOARCH}.zip"
+          mkdir -p dist/stage
+          go build -trimpath -buildmode=c-shared \
+            -ldflags "-s -w -X main.version=${version}" \
+            -o "dist/stage/${plugin}.${EXTENSION}" .
+          rm -f "dist/stage/${plugin}.h"
+          (cd dist/stage && zip -9 "../${archive}" "${plugin}.${EXTENSION}")
+      - name: Build and package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EXPECTED_GOOS: ${{ matrix.goos }}
+          EXPECTED_GOARCH: ${{ matrix.goarch }}
+          EXTENSION: ${{ matrix.extension }}
+        run: |
+          if ((go env GOOS) -ne $env:EXPECTED_GOOS) { throw "unexpected GOOS" }
+          if ((go env GOARCH) -ne $env:EXPECTED_GOARCH) { throw "unexpected GOARCH" }
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $plugin = 'codex-upstream-switcher'
+          $archive = "${plugin}_${version}_$($env:EXPECTED_GOOS)_$($env:EXPECTED_GOARCH).zip"
+          New-Item -ItemType Directory -Force -Path dist/stage | Out-Null
+          go build -trimpath -buildmode=c-shared `
+            -ldflags "-s -w -X main.version=$version" `
+            -o "dist/stage/$plugin.$($env:EXTENSION)" .
+          Remove-Item "dist/stage/$plugin.h" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "dist/stage/$plugin.$($env:EXTENSION)" -DestinationPath "dist/$archive"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-*
+          merge-multiple: true
+          path: dist
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum *.zip | sort > checksums.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip dist/checksums.txt --generate-notes --verify-tag

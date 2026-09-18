@@ -1,0 +1,14 @@
+{
+  "id": "codex-upstream-switcher",
+  "name": "Codex Upstream Switcher",
+  "description": "Routes Codex OAuth credentials through a configurable upstream without replacing CPA's native Codex executor or token lifecycle.",
+  "author": "jason-lee-x",
+  "version": "0.1.0",
+  "repository": "https://github.com/jason-lee-x/codex-upstream-switcher",
+  "homepage": "https://github.com/jason-lee-x/codex-upstream-switcher",
+  "license": "MIT",
+  "tags": ["codex", "auth", "routing", "upstream"],
+  "install": {
+    "type": "github-release"
+  }
+}
