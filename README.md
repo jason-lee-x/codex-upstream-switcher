@@ -17,10 +17,7 @@ account selection, cooling, retry, and WebSocket behavior.
 ## Security warning
 
 This plugin causes CPA to send the selected Codex access token and requests to
-the configured upstream. The default value is
-`https://codex-relay.oaifree.com/backend-api/codex`, which is a third-party
-service. Use it only if you trust that service. Prefer an upstream that you
-operate or have independently reviewed when handling production credentials.
+the configured upstream. 
 
 The plugin does not log or persist tokens itself. The upstream still receives
 whatever CPA's native Codex executor sends to it.
